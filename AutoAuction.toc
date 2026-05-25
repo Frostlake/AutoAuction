@@ -1,0 +1,5 @@
+## Interface: 11200
+## Title: AutoAuction
+## Notes: Isolated Ultra-Lightweight Auto Post Addon
+## Author: Frostlake(Snowfox) nslookup79@gmail.com
+AutoAuction.lua
