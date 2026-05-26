@@ -1,4 +1,4 @@
--- AutoAuction.lua 0.07
+-- AutoAuction.lua (ERROR FIXED - Safe Version)
 local AA = CreateFrame("Frame", "AutoAuctionFrame")
 
 AA.scanQueue = {}
@@ -8,14 +8,11 @@ AA.lowestBuyout = nil
 AA.isScanning = false
 AA.waitingForEvent = false
 
--- cfg
+-- 설정
 AA.queryDelay = 1.0
-AA.pageDelay = 0.45
-AA.timeout = 22.0
-AA.maxRetries = 6
 AA.itemSwitchDelay = 1.5
 
--- values
+-- 상태 변수
 AA.timeSinceLastQuery = 0
 AA.timeSinceLastEvent = 0
 AA.pendingQuery = false
@@ -74,7 +71,7 @@ function AA.DoQuery(self)
         BrowseName:SetText(self.currentItem)
         BrowseName:ClearFocus()
     end
-    QueryAuctionItems(self.currentItem, nil, nil, self.currentPage, nil, nil, nil, true)
+    QueryAuctionItems(self.currentItem, nil, nil, 0, nil, nil, nil, true) -- Page 1 only
     self.waitingForEvent = true
     self.timeSinceLastEvent = 0
 end
@@ -101,16 +98,14 @@ function AA.OnAuctionUpdate(self)
     self.waitingForEvent = false
     self.retryCount = 0
 
-    local numBatch, total = GetNumAuctionItems("list")
+    local numBatch = GetNumAuctionItems("list") or 0
     local lowest = nil
-    local foundCount = 0
     local buyoutCount = 0
 
     for i = 1, numBatch do
         local name, _, count, _, _, _, _, _, buyoutPrice = GetAuctionItemInfo("list", i)
         
         if name == self.currentItem then
-            foundCount = foundCount + 1
             if buyoutPrice and buyoutPrice > 0 and count and count > 0 then
                 buyoutCount = buyoutCount + 1
                 local perUnit = buyoutPrice / count
@@ -121,27 +116,21 @@ function AA.OnAuctionUpdate(self)
         end
     end
 
-    msg(self.currentItem.." - Page "..(self.currentPage+1).." | Total: "..foundCount.." | Buyout: "..buyoutCount)
+    msg(self.currentItem.." | Total: "..numBatch.." | Buyout: "..buyoutCount)
 
-    local scanned = (self.currentPage + 1) * 50
-    if scanned < total or numBatch == 50 then
-        self.currentPage = self.currentPage + 1
-        self.timeSinceLastQuery = -self.pageDelay
-        self:RequestQuery()
+    if lowest then
+        local startPrice = floor(lowest * 0.82)
+        AutoAuctionDB[self.currentItem] = { 
+            buyout = floor(lowest), 
+            start = startPrice 
+        }
+        msg("✅ Saved: "..self.currentItem.." | Buyout: "..FormatMoney(lowest))
     else
-        if lowest then
-            local startPrice = floor(lowest * 0.82)
-            AutoAuctionDB[self.currentItem] = { 
-                buyout = floor(lowest), 
-                start = startPrice 
-            }
-            msg("✅ Saved: "..self.currentItem.." | Buyout: "..FormatMoney(lowest))
-        else
-            AutoAuctionDB[self.currentItem] = nil
-            msg("❌ No buyout found for: "..self.currentItem)
-        end
-        self:ScanNextItem()
+        AutoAuctionDB[self.currentItem] = nil
+        msg("❌ No buyout found: "..self.currentItem)
     end
+
+    self:ScanNextItem()
 end
 
 AA:SetScript("OnUpdate", function()
@@ -169,16 +158,10 @@ AA:SetScript("OnUpdate", function()
         end
     end
 
-    if self.waitingForEvent and self.timeSinceLastEvent > self.timeout then
-        if self.retryCount < self.maxRetries then
-            self.retryCount = self.retryCount + 1
-            msg("Retry "..self.retryCount.." - "..self.currentItem)
-            self:DoQuery()
-        else
-            msg("Skip (timeout): "..self.currentItem)
-            self.waitingForEvent = false
-            self:ScanNextItem()
-        end
+    if self.waitingForEvent and self.timeSinceLastEvent > 15 then
+        msg("Timeout: "..self.currentItem)
+        self.waitingForEvent = false
+        self:ScanNextItem()
     end
 end)
 
