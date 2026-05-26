@@ -1,4 +1,4 @@
--- AutoAuction.lua (ERROR FIXED - Safe Version)
+-- AutoAuction.lua (FINAL - Persistent DB + Link Support + Scan Lock)
 local AA = CreateFrame("Frame", "AutoAuctionFrame")
 
 AA.scanQueue = {}
@@ -39,7 +39,10 @@ local function GetName(link)
     return n
 end
 
-function AA.BuildItemList(self)
+-- =========================
+-- Build List
+-- =========================
+function AA.BuildItemList(self, specificItem)
     self.scanQueue = {}
     local seen = {}
     for bag = 0, 4 do
@@ -49,7 +52,9 @@ function AA.BuildItemList(self)
                 local name = GetName(link)
                 if name and not seen[name] then
                     seen[name] = true
-                    table.insert(self.scanQueue, name)
+                    if not specificItem or name == specificItem then
+                        table.insert(self.scanQueue, name)
+                    end
                 end
             end
         end
@@ -68,10 +73,14 @@ function AA.DoQuery(self)
         return
     end
     if BrowseName then
-        BrowseName:SetText(self.currentItem)
+        BrowseName:SetText(self.currentItem or "")
         BrowseName:ClearFocus()
     end
-    QueryAuctionItems(self.currentItem, nil, nil, 0, nil, nil, nil, true) -- Page 1 only
+
+    pcall(function()
+        QueryAuctionItems(self.currentItem, nil, nil, 0, nil, nil, nil, true)
+    end)
+
     self.waitingForEvent = true
     self.timeSinceLastEvent = 0
 end
@@ -122,12 +131,12 @@ function AA.OnAuctionUpdate(self)
         local startPrice = floor(lowest * 0.82)
         AutoAuctionDB[self.currentItem] = { 
             buyout = floor(lowest), 
-            start = startPrice 
+            start = startPrice,
+            lastScan = time()
         }
         msg("✅ Saved: "..self.currentItem.." | Buyout: "..FormatMoney(lowest))
     else
-        AutoAuctionDB[self.currentItem] = nil
-        msg("❌ No buyout found: "..self.currentItem)
+        msg("❌ No buyout found: "..self.currentItem.." (Keeping old data)")
     end
 
     self:ScanNextItem()
@@ -158,14 +167,13 @@ AA:SetScript("OnUpdate", function()
         end
     end
 
-    if self.waitingForEvent and self.timeSinceLastEvent > 15 then
-        msg("Timeout: "..self.currentItem)
+    if self.waitingForEvent and self.timeSinceLastEvent > 12 then
         self.waitingForEvent = false
         self:ScanNextItem()
     end
 end)
 
--- Direct Posting (Stack Total)
+-- Direct Posting
 local function PostAuctionDirectly(name)
     local d = AutoAuctionDB[name]
     if not d then
@@ -214,7 +222,6 @@ ContainerFrameItemButton_OnClick = function(button, ignoreShift)
         local name = GetName(link)
 
         if name then
-            UseContainerItem(bag, slot)
             PostAuctionDirectly(name)
             return
         end
@@ -222,7 +229,7 @@ ContainerFrameItemButton_OnClick = function(button, ignoreShift)
     origClick(button, ignoreShift)
 end
 
--- Tooltip
+-- Tooltip (현재 가격 + 지난 가격)
 local function HookTooltip()
     local orig = GameTooltip.SetBagItem
     GameTooltip.SetBagItem = function(tooltip, bag, slot)
@@ -235,12 +242,12 @@ local function HookTooltip()
         if name and AutoAuctionDB[name] then
             local d = AutoAuctionDB[name]
             tooltip:AddLine("|cFF00FF00[AutoAuction]|r")
-            tooltip:AddLine("Buyout (1ea): "..FormatMoney(d.buyout))
+            tooltip:AddLine("Current Buyout (1ea): "..FormatMoney(d.buyout))
             if stackCount and stackCount > 1 then
-                tooltip:AddLine("Buyout (Total): |cFFFFFFFF"..FormatMoney(d.buyout * stackCount).."|r")
+                tooltip:AddLine("Current Buyout (Total): |cFFFFFFFF"..FormatMoney(d.buyout * stackCount).."|r")
             end
         else
-            tooltip:AddLine("|cFFFF0000No price data|r")
+            tooltip:AddLine("|cFFFF0000No current price data|r")
         end
         tooltip:Show()
     end
@@ -252,9 +259,16 @@ AA:RegisterEvent("AUCTION_ITEM_LIST_UPDATE")
 
 AA:SetScript("OnEvent", function()
     if event == "AUCTION_HOUSE_SHOW" then
-        msg("AutoAuction Loaded.")
-        msg("Use |cFFFFFF00/aascan|r")
-        msg("Right-click item to auto post")
+        msg("|cFF00FF00AutoAuction Loaded!|r")
+        msg(" ")
+        msg("|cFFFFFF00=== How to Use ===|r")
+        msg("1. Full Scan: |cFFFFFF00/aascan|r")
+        msg("2. Specific Item: |cFFFFFF00/aascan [Item Link]|r")
+        msg("   (Drag item link into chat after /aascan)")
+        msg(" ")
+        msg("3. Post Item: Open AH → Right-click item in bags")
+        msg(" ")
+        msg("Note: Equippable items will NOT be equipped.")
         HookTooltip()
         for bag=0,4 do OpenBag(bag) end
 
@@ -270,16 +284,25 @@ AA:SetScript("OnEvent", function()
     end
 end)
 
-function AA.StartScan(self)
+function AA.StartScan(self, arg)
     if not AuctionFrame or not AuctionFrame:IsVisible() then
         msg("Open the Auction House first.")
         return
     end
     if self.isScanning then
-        msg("Already scanning.")
+        msg("Already scanning. Use |cFFFFFF00/aastop|r first.")
         return
     end
-    self:BuildItemList()
+
+    local specific = nil
+    if arg and arg ~= "" then
+        specific = GetName(arg) or arg
+        msg("Scanning specific item: |cFFFFFF00"..specific.."|r")
+    else
+        msg("Starting full scan...")
+    end
+
+    self:BuildItemList(specific)
     if table.getn(self.scanQueue) == 0 then
         msg("No items found.")
         return
@@ -289,7 +312,7 @@ function AA.StartScan(self)
 end
 
 SLASH_AUTOAUCTION1 = "/aascan"
-SlashCmdList["AUTOAUCTION"] = function() AA:StartScan() end
+SlashCmdList["AUTOAUCTION"] = function(msg) AA:StartScan(msg) end
 
 SLASH_AUTOSTOP1 = "/aastop"
 SlashCmdList["AUTOSTOP"] = function()
@@ -297,5 +320,7 @@ SlashCmdList["AUTOSTOP"] = function()
         AA.isScanning = false
         AA.scanQueue = {}
         msg("Scan stopped.")
+    else
+        msg("No scan in progress.")
     end
 end
