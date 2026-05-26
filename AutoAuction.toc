@@ -3,3 +3,4 @@
 ## Notes: Isolated Ultra-Lightweight Auto Post Addon
 ## Author: Frostlake(Snowfox) nslookup79@gmail.com
 AutoAuction.lua
+SavedVariables: AutoAuctionDB
