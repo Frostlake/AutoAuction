@@ -2,5 +2,6 @@
 ## Title: AutoAuction
 ## Notes: Isolated Ultra-Lightweight Auto Post Addon
 ## Author: Frostlake(Snowfox) nslookup79@gmail.com
+## SavedVariables: AutoAuctionDB
 AutoAuction.lua
-SavedVariables: AutoAuctionDB
+
