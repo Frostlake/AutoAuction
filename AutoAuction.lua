@@ -1,4 +1,3 @@
--- AutoAuction.lua (FINAL - Persistent DB + Link Support + Scan Lock)
 local AA = CreateFrame("Frame", "AutoAuctionFrame")
 
 AA.scanQueue = {}
@@ -8,11 +7,10 @@ AA.lowestBuyout = nil
 AA.isScanning = false
 AA.waitingForEvent = false
 
--- 설정
+
 AA.queryDelay = 1.0
 AA.itemSwitchDelay = 1.5
 
--- 상태 변수
 AA.timeSinceLastQuery = 0
 AA.timeSinceLastEvent = 0
 AA.pendingQuery = false
@@ -37,6 +35,20 @@ local function GetName(link)
     if not link then return nil end
     local _,_,n = string.find(link, "%[(.+)%]")
     return n
+end
+
+-- 상태 완전 초기화 함수 (경매장 닫힘/스캔 정지 시 안전하게 상태 복구)
+local function ResetScanState()
+    AA.isScanning = false
+    AA.scanQueue = {}
+    AA.currentItem = nil
+    AA.currentPage = 0
+    AA.lowestBuyout = nil
+    AA.waitingForEvent = false
+    AA.pendingQuery = false
+    AA.switchingItem = false
+    AA.switchTime = 0
+    AA.retryCount = 0
 end
 
 -- =========================
@@ -213,9 +225,11 @@ local function PostAuctionDirectly(name)
     end
 end
 
+-- Container Click Override
+
 local origClick = ContainerFrameItemButton_OnClick
 ContainerFrameItemButton_OnClick = function(button, ignoreShift)
-    if arg1 == "RightButton" and AuctionFrame and AuctionFrame:IsVisible() then
+    if button == "RightButton" and AuctionFrame and AuctionFrame:IsVisible() then
         local bag = this:GetParent():GetID()
         local slot = this:GetID()
         local link = GetContainerItemLink(bag, slot)
@@ -229,8 +243,12 @@ ContainerFrameItemButton_OnClick = function(button, ignoreShift)
     origClick(button, ignoreShift)
 end
 
--- Tooltip (현재 가격 + 지난 가격)
+-- Tooltip 
+local tooltipHooked = false
 local function HookTooltip()
+    if tooltipHooked then return end
+    tooltipHooked = true
+
     local orig = GameTooltip.SetBagItem
     GameTooltip.SetBagItem = function(tooltip, bag, slot)
         orig(tooltip, bag, slot)
@@ -269,14 +287,17 @@ AA:SetScript("OnEvent", function()
         msg("3. Post Item: Open AH → Right-click item in bags")
         msg(" ")
         msg("Note: Equippable items will NOT be equipped.")
+        
+
         HookTooltip()
         for bag=0,4 do OpenBag(bag) end
 
     elseif event == "AUCTION_HOUSE_CLOSED" then
         if AA.isScanning then
-            AA.isScanning = false
-            AA.scanQueue = {}
+            ResetScanState()
             msg("Scan stopped (AH closed).")
+        else
+            ResetScanState()
         end
 
     elseif event == "AUCTION_ITEM_LIST_UPDATE" then
@@ -317,8 +338,7 @@ SlashCmdList["AUTOAUCTION"] = function(msg) AA:StartScan(msg) end
 SLASH_AUTOSTOP1 = "/aastop"
 SlashCmdList["AUTOSTOP"] = function()
     if AA.isScanning then
-        AA.isScanning = false
-        AA.scanQueue = {}
+        ResetScanState()
         msg("Scan stopped.")
     else
         msg("No scan in progress.")
