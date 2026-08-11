@@ -37,7 +37,7 @@ local function GetName(link)
     return n
 end
 
--- 상태 완전 초기화 함수 (경매장 닫힘/스캔 정지 시 안전하게 상태 복구)
+
 local function ResetScanState()
     AA.isScanning = false
     AA.scanQueue = {}
